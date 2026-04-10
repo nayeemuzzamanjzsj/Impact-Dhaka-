@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Emergency Corridor — AI-Powered Dhaka Simulator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
+
+  :root {
+    --red:       #ff2d2d;
+    --amber:     #ffb300;
+    --green:     #00e676;
+    --blue:      #448aff;
+    --purple:    #b76cff;
+    --bg:        #080b10;
+    --surface:   #0e1420;
+    --surface2:  #131b28;
+    --border:    rgba(255,255,255,0.06);
+    --muted:     #3d4a60;
+    --text:      #c8d6f0;
+    --text-dim:  #5a6a85;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; width:100%; background:var(--bg); color:var(--text); font-family:'Barlow Condensed',sans-serif; overflow:hidden; }
+
+  #layout { display:flex; flex-direction:column; height:100dvh; height:100vh; }
+  #map-wrap { position:relative; flex:1; min-height:0; }
+  #map { width:100%; height:100%; }
+
+  /* ── STATUS PILL ── */
+  #hud-top {
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    z-index:800; pointer-events:none; white-space:nowrap;
+  }
+  #status-pill {
+    display:flex; align-items:center; gap:8px; padding:7px 16px;
+    border-radius:30px; font-size:13px; font-weight:700; letter-spacing:1.5px;
+    text-transform:uppercase; border:1px solid transparent;
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    transition:background .3s,border-color .3s,color .3s;
+  }
+  #status-pill.idle      { background:rgba(14,20,32,.88); border-color:var(--border); color:var(--text-dim); }
+  #status-pill.moving    { background:rgba(68,138,255,.18); border-color:rgba(68,138,255,.4); color:var(--blue); }
+  #status-pill.emergency { background:rgba(255,45,45,.22); border-color:rgba(255,45,45,.6); color:var(--red); animation:pill-flash 1.1s infinite; }
+  #status-pill.done      { background:rgba(0,230,118,.15); border-color:rgba(0,230,118,.4); color:var(--green); }
+  @keyframes pill-flash { 0%,100%{opacity:1} 50%{opacity:.65} }
+  .pill-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; background:currentColor; }
+  .pill-dot.blink { animation:blink .6s infinite alternate; }
+  @keyframes blink { from{opacity:1} to{opacity:.2} }
+
+  /* ── LEGEND ── */
+  #legend {
+    position:absolute; bottom:12px; left:10px; z-index:800;
+    background:rgba(8,11,16,.9); border:1px solid var(--border);
+    border-radius:10px; padding:10px 13px;
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  }
+  .legend-title { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; font-family:'Space Mono',monospace; }
+  .legend-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; font-size:12px; font-weight:500; color:var(--text); }
+  .legend-row:last-child { margin-bottom:0; }
+  .l-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; border:1.5px solid rgba(255,255,255,.25); }
+
+  /* ── AI PANEL ── */
+  #ai-panel {
+    position:absolute; top:10px; right:10px; z-index:850;
+    width:285px; max-width:calc(100vw - 20px);
+    background:rgba(8,11,16,.93);
+    border:1px solid rgba(183,108,255,.22);
+    border-radius:14px; overflow:hidden;
+    backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px);
+    box-shadow:0 0 50px rgba(183,108,255,.07),0 10px 40px rgba(0,0,0,.55);
+    transform:translateX(110%); opacity:0;
+    transition:transform .45s cubic-bezier(.22,1,.36,1),opacity .3s;
+    display:none !important;
+  }
+  #ai-panel.visible { transform:translateX(0); opacity:1; display:none !important; }
+
+  .ai-header {
+    display:flex; align-items:center; gap:8px; padding:10px 13px;
+    background:rgba(183,108,255,.09); border-bottom:1px solid rgba(183,108,255,.14);
+  }
+  .ai-logo {
+    width:24px; height:24px; border-radius:7px; flex-shrink:0;
+    background:linear-gradient(135deg,#b76cff,#7c3aed);
+    display:flex; align-items:center; justify-content:center; font-size:14px;
+  }
+  .ai-header-labels { flex:1; min-width:0; }
+  .ai-header-title { font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--purple); }
+  .ai-header-sub   { font-size:8.5px; color:var(--text-dim); font-family:'Space Mono',monospace; letter-spacing:.4px; margin-top:1px; }
+  .ai-badge {
+    display:flex; align-items:center; gap:4px; padding:3px 8px;
+    border-radius:20px; font-size:8.5px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; font-family:'Space Mono',monospace; border:1px solid; flex-shrink:0;
+  }
+  .ai-badge.thinking { color:var(--amber); border-color:rgba(255,179,0,.3); background:rgba(255,179,0,.07); }
+  .ai-badge.ready    { color:var(--green); border-color:rgba(0,230,118,.3); background:rgba(0,230,118,.07); }
+  .ai-badge.fallback { color:var(--amber); border-color:rgba(255,179,0,.3); background:rgba(255,179,0,.07); }
+  .ai-badge.standby  { color:var(--text-dim); border-color:var(--border); background:transparent; }
+  .ai-bdot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+  .ai-badge.thinking .ai-bdot { animation:blink .5s infinite alternate; }
+
+  .ai-body { padding:12px 13px; display:flex; flex-direction:column; gap:10px; }
+
+  /* Skeleton loader */
+  .skel { height:10px; border-radius:4px;
+    background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);
+    background-size:200% 100%; animation:shimmer 1.4s infinite; }
+  .skel.t24 { height:24px; border-radius:7px; }
+  .skel.w60 { width:60%; } .skel.w80 { width:80%; } .skel.w100 { width:100%; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  /* Time saved hero */
+  .ai-hero {
+    display:flex; align-items:center; gap:12px;
+    background:rgba(0,230,118,.07); border:1px solid rgba(0,230,118,.18);
+    border-radius:10px; padding:11px 13px;
+  }
+  .ai-hero-icon { font-size:24px; flex-shrink:0; }
+  .ai-hero-num { font-size:32px; font-weight:900; font-family:'Space Mono',monospace; color:var(--green); line-height:1; }
+  .ai-hero-lbl { font-size:9.5px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
+
+  /* Message box */
+  .ai-msg-box { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:11px 13px; }
+  .ai-msg-label { font-size:8px; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim); font-family:'Space Mono',monospace; margin-bottom:6px; }
+  .ai-msg-bangla  { font-size:14px; color:#fff; line-height:1.5; margin-bottom:4px; font-weight:600; }
+  .ai-msg-english { font-size:11.5px; color:var(--text-dim); line-height:1.4; font-style:italic; }
+
+  /* Mini stats */
+  .ai-mini-row { display:flex; gap:6px; }
+  .ai-mini {
+    flex:1; background:var(--surface2); border:1px solid var(--border);
+    border-radius:8px; padding:8px; text-align:center;
+  }
+  .ai-mini-n { font-size:20px; font-weight:900; font-family:'Space Mono',monospace; line-height:1; }
+  .ai-mini-l { font-size:8px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
+
+  /* Wave progress */
+  .ai-wave { }
+  .ai-wave-bar { height:4px; background:var(--surface2); border-radius:2px; overflow:hidden; }
+  .ai-wave-fill { height:100%; background:linear-gradient(90deg,var(--purple),var(--blue)); border-radius:2px; width:0%; transition:width .35s; }
+  .ai-wave-lbl { font-size:9px; color:var(--text-dim); font-family:'Space Mono',monospace; letter-spacing:.4px; margin-top:5px; }
+
+  .ai-footer { font-size:8.5px; color:var(--text-dim); font-family:'Space Mono',monospace; letter-spacing:.3px; text-align:right; }
+
+  /* Error/fallback box */
+  .ai-warn-box {
+    background:rgba(255,179,0,.07); border:1px solid rgba(255,179,0,.2);
+    border-radius:8px; padding:10px 12px;
+  }
+  .ai-warn-title { font-size:10px; font-weight:700; color:var(--amber); letter-spacing:1px; margin-bottom:4px; }
+  .ai-warn-body  { font-size:11px; color:var(--text-dim); }
+
+  /* ── CONTROL PANEL ── */
+  #panel {
+    background:var(--surface); border-top:1px solid var(--border);
+    padding:12px 14px 14px;
+    display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
+  }
+  #veh-badge {
+    display:flex; align-items:center; gap:10px; padding:8px 12px;
+    background:var(--bg); border:1px solid var(--border); border-radius:10px;
+  }
+  .veh-emoji { font-size:26px; line-height:1; }
+  .veh-type { font-size:17px; font-weight:900; letter-spacing:.5px; text-transform:uppercase; color:#fff; }
+  .veh-sub  { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); font-family:'Space Mono',monospace; }
+
+  #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:center; }
+
+  .btn {
+    font-family:'Barlow Condensed',sans-serif; font-size:13px; font-weight:700;
+    letter-spacing:1px; text-transform:uppercase; padding:10px 16px;
+    border:1px solid transparent; border-radius:8px; cursor:pointer;
+    transition:all .18s; user-select:none;
+    display:flex; align-items:center; gap:6px; white-space:nowrap;
+  }
+  .btn:active { transform:scale(.96); }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+
+  #btn-emerg { background:rgba(255,45,45,.1); border-color:rgba(255,45,45,.3); color:var(--red); }
+  #btn-emerg:hover { background:rgba(255,45,45,.2); border-color:var(--red); }
+  #btn-emerg.on { background:var(--red); border-color:var(--red); color:#fff; animation:btn-pulse 1.3s infinite; }
+  @keyframes btn-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,45,45,.5)} 60%{box-shadow:0 0 0 8px rgba(255,45,45,0)} }
+
+  #btn-move { background:rgba(68,138,255,.1); border-color:rgba(68,138,255,.3); color:var(--blue); }
+  #btn-move:hover { background:rgba(68,138,255,.2); border-color:var(--blue); }
+  #btn-move.moving { background:rgba(255,179,0,.12); border-color:var(--amber); color:var(--amber); }
+
+  #btn-reset { background:transparent; border-color:var(--border); color:var(--text-dim); }
+  #btn-reset:hover { border-color:var(--muted); color:var(--text); }
+
+  .speed-wrap { display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .spd-lbl { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); font-family:'Space Mono',monospace; }
+  .spd-val { font-size:16px; font-weight:900; color:#fff; font-family:'Space Mono',monospace; line-height:1; }
+  input[type=range] { -webkit-appearance:none; width:80px; height:3px; background:var(--muted); border-radius:2px; outline:none; cursor:pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; background:var(--blue); border-radius:50%; border:2px solid var(--bg); }
+
+  #stats { display:flex; gap:8px; }
+  .stat { display:flex; flex-direction:column; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg); min-width:56px; }
+  .stat-n { font-size:22px; font-weight:900; font-family:'Space Mono',monospace; line-height:1; }
+  .stat-l { font-size:8.5px; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); margin-top:3px; }
+  .stat.alerted .stat-n { color:var(--red); }
+  .stat.cleared  .stat-n { color:var(--green); }
+  .stat.normal   .stat-n { color:var(--blue); }
+
+  /* ── MARKERS ── */
+  .amb-wrap { position:relative; width:40px; height:40px; display:flex; align-items:center; justify-content:center; }
+  .amb-ring { position:absolute; inset:0; border-radius:9px; background:rgba(255,45,45,.3); }
+  .amb-ring.active { animation:ring-pulse 1s ease-out infinite; }
+  @keyframes ring-pulse { 0%{transform:scale(1);opacity:.9} 100%{transform:scale(2.4);opacity:0} }
+  .amb-icon { position:relative; z-index:2; width:38px; height:38px; background:var(--red); border:2.5px solid #fff; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:0 0 0 3px rgba(255,45,45,.4),0 4px 16px rgba(0,0,0,.6); line-height:1; }
+  .drv-dot { width:13px; height:13px; border-radius:50%; border:2px solid rgba(255,255,255,.3); }
+  /* Priority driver gets a pulsing purple ring */
+  .drv-pri { width:16px; height:16px; border-radius:50%; border:2px solid var(--purple); position:relative; box-shadow:0 0 7px rgba(183,108,255,.5); }
+  .drv-pri::after { content:''; position:absolute; inset:-4px; border-radius:50%; border:1.5px solid var(--purple); animation:pri-ring 1.5s ease-out infinite; opacity:.7; }
+  @keyframes pri-ring { 0%{transform:scale(1);opacity:.7} 100%{transform:scale(1.9);opacity:0} }
+
+  .leaflet-control-attribution { background:rgba(8,11,16,.8)!important; color:#3d4a60!important; font-size:9px!important; }
+  .leaflet-control-attribution a { color:#5a6a85!important; }
+
+  /* ── TRAFFIC VOLUME SLIDER ── */
+  .traffic-wrap { display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .traffic-lbl { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); font-family:'Space Mono',monospace; }
+  .traffic-val { font-size:16px; font-weight:900; color:#fff; font-family:'Space Mono',monospace; line-height:1; }
+  input#traffic-slider { width:90px; }
+
+  /* ── AI COGNITION EYE DOT ── */
+  .drv-eye {
+    width:15px; height:15px; border-radius:50%;
+    border:2px solid #00e5ff; background:#00bcd4;
+    box-shadow:0 0 8px #00e5ff,0 0 16px rgba(0,229,255,.5);
+    animation:eye-pulse .7s ease-in-out infinite alternate;
+  }
+  @keyframes eye-pulse {
+    from { box-shadow:0 0 6px #00e5ff,0 0 12px rgba(0,229,255,.4); transform:scale(1); }
+    to   { box-shadow:0 0 14px #00e5ff,0 0 28px rgba(0,229,255,.7); transform:scale(1.25); }
+  }
+
+  /* ── IMPACT DASHBOARD ── */
+  #impact-dash {
+    position:absolute; bottom:12px; right:10px; z-index:820;
+    width:200px;
+    background:rgba(6,8,14,.96);
+    border:1px solid rgba(68,138,255,.28);
+    border-radius:12px; overflow:hidden;
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    box-shadow:0 0 30px rgba(68,138,255,.08),0 8px 32px rgba(0,0,0,.6);
+  }
+  .dash-header {
+    padding:8px 12px;
+    background:rgba(68,138,255,.1);
+    border-bottom:1px solid rgba(68,138,255,.18);
+    font-size:8.5px; letter-spacing:2px; text-transform:uppercase;
+    color:var(--blue); font-family:'Space Mono',monospace; font-weight:700;
+  }
+  .dash-body { padding:8px 10px; display:flex; flex-direction:column; gap:7px; }
+  .dash-row {
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:7px; padding:6px 10px;
+  }
+  .dash-label { font-size:8.5px; letter-spacing:1px; text-transform:uppercase; color:var(--text-dim); font-family:'Space Mono',monospace; }
+  .dash-value { font-size:17px; font-weight:900; font-family:'Space Mono',monospace; line-height:1; }
+  .dash-unit  { font-size:8px; color:var(--text-dim); font-family:'Space Mono',monospace; margin-top:1px; }
+  .dash-col   { display:flex; flex-direction:column; align-items:flex-end; }
+  #d-time-saved { color:var(--green); }
+  #d-clearance  { color:var(--amber); }
+  #d-lives      { color:var(--red); }
+  .dash-lives-blink { animation:blink .8s infinite alternate; }
+
+
+  @media(max-width:520px) {
+    #panel { grid-template-columns:1fr; gap:10px; }
+    #controls,#stats { justify-content:flex-start; }
+    #veh-badge { display:none; }
+    #ai-panel { width:calc(100vw - 20px); }
+  }
+
+  /* ── FINE PANEL ── */
+  #fine-panel {
+    position:absolute; top:10px; left:10px; z-index:820;
+    width:220px; max-width:calc(100vw - 20px);
+    background:rgba(6,8,14,.97);
+    border:1.5px solid rgba(255,45,45,.55);
+    border-radius:12px; overflow:hidden;
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    box-shadow:0 0 0 1px rgba(255,45,45,.12),
+               0 0 24px rgba(255,45,45,.18),
+               0 8px 32px rgba(0,0,0,.7);
+    display:flex; flex-direction:column;
+  }
+  .fp-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:9px 12px;
+    background:rgba(255,45,45,.16);
+    border-bottom:1.5px solid rgba(255,45,45,.3);
+  }
+  .fp-title {
+    font-size:9px; letter-spacing:2px; text-transform:uppercase;
+    color:#ff6b6b; font-family:'Space Mono',monospace; font-weight:700;
+    text-shadow:0 0 8px rgba(255,45,45,.6);
+  }
+  .fp-total {
+    font-size:14px; font-weight:700; font-family:'Space Mono',monospace;
+    color:#fff; letter-spacing:.5px;
+    text-shadow:0 0 10px rgba(255,45,45,.7);
+    background:rgba(255,45,45,.22); border:1px solid rgba(255,45,45,.4);
+    border-radius:5px; padding:1px 7px;
+  }
+  .fp-list {
+    max-height:160px; overflow-y:auto;
+    padding:6px 8px; display:flex; flex-direction:column; gap:4px;
+    scrollbar-width:thin; scrollbar-color:rgba(255,45,45,.35) transparent;
+  }
+  .fp-list::-webkit-scrollbar { width:3px; }
+  .fp-list::-webkit-scrollbar-thumb { background:rgba(255,45,45,.4); border-radius:2px; }
+  .fp-empty {
+    font-size:10px; color:var(--text-dim); text-align:center;
+    padding:10px 0; font-family:'Space Mono',monospace; letter-spacing:.3px;
+  }
+  .fp-row {
+    display:flex; align-items:center; justify-content:space-between;
+    background:rgba(20,10,10,.9); border:1px solid rgba(255,45,45,.28);
+    border-radius:6px; padding:5px 9px;
+    animation:fp-flash .35s ease-out;
+  }
+  @keyframes fp-flash {
+    from { background:rgba(255,45,45,.35); border-color:rgba(255,45,45,.8); box-shadow:0 0 12px rgba(255,45,45,.4); }
+    to   { background:rgba(20,10,10,.9);   border-color:rgba(255,45,45,.28); box-shadow:none; }
+  }
+  .fp-plate {
+    font-size:11px; font-weight:700; font-family:'Space Mono',monospace;
+    color:#e8d5d5; letter-spacing:.5px;
+  }
+  .fp-amt {
+    font-size:12px; font-weight:700; font-family:'Space Mono',monospace;
+    color:#ff5252;
+    text-shadow:0 0 6px rgba(255,45,45,.5);
+  }
+  /* ── END FINE PANEL CSS ── */
+
+  /* ── ROUTE PLANNER ── */
+  #route-planner {
+    position:absolute; bottom:12px; left:190px; z-index:800;
+    max-width:210px; width:210px;
+    background:rgba(8,11,16,.92);
+    border:1px solid var(--border);
+    border-radius:10px; padding:11px 13px;
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .rp-header {
+    font-size:9px; letter-spacing:2px; text-transform:uppercase;
+    color:var(--blue); font-family:'Space Mono',monospace;
+    border-bottom:1px solid var(--border); padding-bottom:7px; margin-bottom:1px;
+  }
+  .rp-field { display:flex; flex-direction:column; gap:3px; }
+  .rp-label {
+    font-size:8.5px; letter-spacing:1.5px; text-transform:uppercase;
+    color:var(--text-dim); font-family:'Space Mono',monospace;
+  }
+  #route-planner select {
+    font-family:'Barlow Condensed',sans-serif; font-size:12px; font-weight:500;
+    background:var(--surface2); color:var(--text);
+    border:1px solid var(--border); border-radius:6px;
+    padding:5px 8px; outline:none; cursor:pointer; width:100%;
+    -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235a6a85'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 8px center;
+    padding-right:24px;
+  }
+  #route-planner select:focus { border-color:rgba(68,138,255,.5); }
+  #route-planner select option { background:var(--surface); }
+  .rp-btn {
+    background:rgba(68,138,255,.15) !important;
+    border-color:rgba(68,138,255,.4) !important;
+    color:var(--blue) !important;
+    font-size:12px !important; padding:8px 12px !important;
+    justify-content:center; width:100%;
+    letter-spacing:1.5px;
+  }
+  .rp-btn:hover:not(:disabled) {
+    background:rgba(68,138,255,.28) !important;
+    border-color:var(--blue) !important;
+  }
+  #rp-status {
+    font-size:10px; font-family:'Space Mono',monospace;
+    color:var(--green); letter-spacing:.4px; line-height:1.4;
+    text-align:center; padding-top:2px;
+  }
+  #rp-status.error { color:var(--red); }
+  /* ── END ROUTE PLANNER CSS ── */
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <!-- Status pill -->
+    <div id="hud-top">
+      <div id="status-pill" class="idle">
+        <div class="pill-dot" id="pill-dot"></div>
+        <span id="status-text">SIMULATION READY</span>
+      </div>
+    </div>
+
+    <!-- AI Analysis Panel -->
+    <div id="ai-panel">
+      <div class="ai-header">
+        <div class="ai-logo">✦</div>
+        <div class="ai-header-labels">
+          <div class="ai-header-title">AI Corridor Analysis</div>
+          <div class="ai-header-sub">claude-sonnet-4 · live</div>
+        </div>
+        <div class="ai-badge standby" id="ai-badge">
+          <div class="ai-bdot"></div>
+          <span id="ai-badge-txt">IDLE</span>
+        </div>
+      </div>
+      <div class="ai-body" id="ai-body">
+        <div style="font-size:11px;color:var(--text-dim);text-align:center;padding:12px 0">
+          Activate emergency to run AI analysis
+        </div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div id="legend">
+      <div class="legend-title">Driver Status</div>
+      <div class="legend-row"><div class="l-dot" style="background:#448aff"></div> Normal</div>
+      <div class="legend-row"><div class="l-dot" style="background:#ff2d2d"></div> Pulling aside</div>
+      <div class="legend-row"><div class="l-dot" style="background:#ffb300"></div> Transitioning</div>
+      <div class="legend-row"><div class="l-dot" style="background:#00e676"></div> All clear</div>
+      <div class="legend-row"><div class="l-dot" style="background:rgba(183,108,255,.3);border-color:rgba(183,108,255,.6)"></div> AI priority</div>
+    </div>
+
+    <!-- ── FINE PANEL ── -->
+    <div id="fine-panel">
+      <div class="fp-header">
+        <span class="fp-title">⚖ VIOLATIONS</span>
+        <span class="fp-total" id="fp-total">৳0</span>
+      </div>
+      <div class="fp-list" id="fp-list">
+        <div class="fp-empty" id="fp-empty">No violations yet</div>
+      </div>
+    </div>
+    <!-- ── END FINE PANEL ── -->
+
+    <!-- ── ROUTE PLANNER ── -->
+    <div id="route-planner">
+      <div class="rp-header">ROUTE PLANNER</div>
+
+      <div class="rp-field">
+        <label class="rp-label">From Hospital</label>
+        <select id="rp-from" onchange="rpSwapIfSame()">
+          <option value="23.7226,90.3966">Dhaka Medical College Hospital</option>
+          <option value="23.7513,90.3744">Square Hospital</option>
+          <option value="23.7956,90.4279">United Hospital</option>
+          <option value="23.7896,90.4071">Apollo Hospitals Dhaka</option>
+          <option value="23.7499,90.3714">Labaid Hospital</option>
+          <option value="23.7461,90.3742">Ibn Sina Hospital Dhanmondi</option>
+          <option value="23.7939,90.3576">National Heart Foundation</option>
+          <option value="23.7272,90.3965">Bangabandhu Sheikh Mujib Medical University</option>
+          <option value="23.7601,90.3786">Popular Medical Centre</option>
+          <option value="23.7998,90.3567">Enam Medical College Hospital</option>
+        </select>
+      </div>
+
+      <div class="rp-field">
+        <label class="rp-label">To Hospital</label>
+        <select id="rp-to" onchange="rpSwapIfSame()">
+          <option value="23.7226,90.3966">Dhaka Medical College Hospital</option>
+          <option value="23.7513,90.3744">Square Hospital</option>
+          <option value="23.7956,90.4279">United Hospital</option>
+          <option value="23.7896,90.4071" selected>Apollo Hospitals Dhaka</option>
+          <option value="23.7499,90.3714">Labaid Hospital</option>
+          <option value="23.7461,90.3742">Ibn Sina Hospital Dhanmondi</option>
+          <option value="23.7939,90.3576">National Heart Foundation</option>
+          <option value="23.7272,90.3965">Bangabandhu Sheikh Mujib Medical University</option>
+          <option value="23.7601,90.3786">Popular Medical Centre</option>
+          <option value="23.7998,90.3567">Enam Medical College Hospital</option>
+        </select>
+      </div>
+
+      <button class="btn rp-btn" id="rp-calc-btn" onclick="calculateRoute()">Calculate Route</button>
+      <div id="rp-status" style="display:none"></div>
+    </div>
+    <!-- ── END ROUTE PLANNER ── -->
+
+    <!-- ── IMPACT DASHBOARD ── -->
+    <div id="impact-dash">
+      <div class="dash-header">⚡ IMPACT METRICS · LIVE</div>
+      <div class="dash-body">
+        <div class="dash-row">
+          <div>
+            <div class="dash-label">Time Saved</div>
+          </div>
+          <div class="dash-col">
+            <div class="dash-value" id="d-time-saved">0</div>
+            <div class="dash-unit">seconds</div>
+          </div>
+        </div>
+        <div class="dash-row">
+          <div>
+            <div class="dash-label">Corridor Clear</div>
+          </div>
+          <div class="dash-col">
+            <div class="dash-value" id="d-clearance">0%</div>
+            <div class="dash-unit">of zone</div>
+          </div>
+        </div>
+        <div class="dash-row">
+          <div>
+            <div class="dash-label">Lives at Risk</div>
+          </div>
+          <div class="dash-col">
+            <div class="dash-value" id="d-lives">1</div>
+            <div class="dash-unit">critical</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ── END IMPACT DASHBOARD ── -->
+
+  </div>
+
+  <!-- Control Panel -->
+  <div id="panel">
+    <div id="veh-badge">
+      <div class="veh-emoji">🚑</div>
+      <div>
+        <div class="veh-type">Ambulance</div>
+        <div class="veh-sub">Dhaka Metro · Unit 7</div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button class="btn" id="btn-emerg" onclick="toggleEmergency()">
+        <span>🚨</span><span id="emerg-label">Activate Emergency</span>
+      </button>
+      <button class="btn" id="btn-move" onclick="toggleMove()">
+        <span id="move-icon">▶</span><span id="move-label">Start</span>
+      </button>
+      <button class="btn" id="btn-reset" onclick="resetSim()">↺ Reset</button>
+      <div class="speed-wrap">
+        <div class="spd-lbl">Speed</div>
+        <input type="range" id="speed-slider" min="1" max="6" value="3" oninput="setSpeed(this.value)">
+        <div class="spd-val" id="speed-val">×3</div>
+      </div>
+      <div class="traffic-wrap">
+        <div class="traffic-lbl">Traffic Vol</div>
+        <input type="range" id="traffic-slider" min="50" max="800" value="70" oninput="setTraffic(this.value)">
+        <div class="traffic-val" id="traffic-val">70</div>
+      </div>
+    </div>
+
+    <div id="stats">
+      <div class="stat alerted"><div class="stat-n" id="s-alerted">0</div><div class="stat-l">Alerted</div></div>
+      <div class="stat cleared"><div class="stat-n" id="s-cleared">0</div><div class="stat-l">Cleared</div></div>
+      <div class="stat normal"><div class="stat-n" id="s-normal">0</div><div class="stat-l">Normal</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════════
+   CONFIG
+══════════════════════════════════════════════════════════ */
+const CFG = {
+  NUM_DRIVERS:        70,
+  CORRIDOR_M:         600,
+  PULLOUT_DEG:        0.00042,
+  SPEED_BASE_MS:      18,
+  TICK_MS:            50,
+  ALERT_COOLDOWN:     2800,
+  CLEAR_COOLDOWN:     3200,
+  SPAWN_BAND:         0.010,
+  PRIORITY_GAP_MS:    360,    // stagger between each priority alert
+  CLAUDE_MODEL:       'claude-sonnet-4-20250514',
+};
+
+const ROUTE = [
+  [23.7935, 90.4050],  // Kakoli / Banani
+  [23.7878, 90.4048],
+  [23.7820, 90.4046],  // Mohakhali
+  [23.7765, 90.4015],
+  [23.7710, 90.3992],  // Tejgaon I/A
+  [23.7660, 90.3978],
+  [23.7610, 90.3963],  // Nakhalpara
+  [23.7560, 90.3952],
+  [23.7510, 90.3958],  // Kawran Bazar
+  [23.7465, 90.3982],
+  [23.7420, 90.4010],  // Matsya Bhaban
+];
+
+/* ══════════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════════ */
+let emergencyOn   = false;
+let isMoving      = false;
+let speedMult     = 3;
+let segIdx        = 0, segT = 0;
+let vLat          = ROUTE[0][0], vLng = ROUTE[0][1], vBearing = 0;
+let drivers       = [];
+let mainInterval  = null;
+let priorityTimers= [];
+let lastAlertAt   = 0, lastClearAt = 0;
+let speechQ       = [], isSpeaking = false;
+
+// AI
+let aiPriorityIds  = [];
+let aiPrioritySet  = new Set();
+let aiResult       = null;
+let aiAlerted      = 0;
+let aiLoading      = false;
+
+/* ══════════════════════════════════════════════════════════
+   MAP INIT
+══════════════════════════════════════════════════════════ */
+const map = L.map('map', { center:[23.7700,90.4000], zoom:14, zoomControl:false });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  subdomains:'abcd', maxZoom:20, attribution:'© OpenStreetMap © CARTO'
+}).addTo(map);
+L.control.zoom({ position:'topright' }).addTo(map);
+
+L.polyline(ROUTE, { color:'#448aff', weight:3, opacity:.35, dashArray:'6,5' }).addTo(map);
+let corridorPoly = null, clearedLine = null;
+
+L.circleMarker(ROUTE[0], { radius:7, fillColor:'#00e676', fillOpacity:1, color:'#fff', weight:2, interactive:false })
+  .addTo(map).bindTooltip('Start · Banani');
+L.circleMarker(ROUTE[ROUTE.length-1], { radius:7, fillColor:'#ff2d2d', fillOpacity:1, color:'#fff', weight:2, interactive:false })
+  .addTo(map).bindTooltip('End · Matsya Bhaban');
+
+map.fitBounds(L.latLngBounds(ROUTE), { padding:[50,50] });
+
+/* ══════════════════════════════════════════════════════════
+   VEHICLE
+══════════════════════════════════════════════════════════ */
+function makeVehicleIcon(siren) {
+  return L.divIcon({
+    className:'',
+    html:`<div class="amb-wrap"><div class="amb-ring${siren?' active':''}"></div><div class="amb-icon">🚑</div></div>`,
+    iconSize:[40,40], iconAnchor:[20,20],
+  });
+}
+const vehicleMark = L.marker([vLat,vLng], { icon:makeVehicleIcon(false), zIndexOffset:2000, interactive:false }).addTo(map);
+
+/* ══════════════════════════════════════════════════════════
+   GEO HELPERS
+══════════════════════════════════════════════════════════ */
+function haversine(la1,lo1,la2,lo2) {
+  const R=6371000, r=Math.PI/180;
+  const dLat=(la2-la1)*r, dLon=(lo2-lo1)*r;
+  return R*2*Math.atan2(
+    Math.sqrt(Math.sin(dLat/2)**2 + Math.cos(la1*r)*Math.cos(la2*r)*Math.sin(dLon/2)**2),
+    Math.sqrt(1-(Math.sin(dLat/2)**2 + Math.cos(la1*r)*Math.cos(la2*r)*Math.sin(dLon/2)**2))
+  );
+}
+function getBearing(la1,lo1,la2,lo2) {
+  const r=Math.PI/180, dL=(lo2-lo1)*r;
+  return Math.atan2(Math.sin(dL)*Math.cos(la2*r),
+    Math.cos(la1*r)*Math.sin(la2*r)-Math.sin(la1*r)*Math.cos(la2*r)*Math.cos(dL));
+}
+function perpOff(brg,side,deg) {
+  const p=brg+side*Math.PI/2;
+  return [Math.cos(p)*deg, Math.sin(p)*deg];
+}
+function ease(t) { return t<.5?2*t*t:-1+(4-2*t)*t; }
+
+/* ══════════════════════════════════════════════════════════
+   DRIVERS
+══════════════════════════════════════════════════════════ */
+function makeDriverIcon(status, priority, cognition) {
+  const c = {normal:'#448aff',alerting:'#ff2d2d',alerted:'#ff2d2d',clearing:'#ffb300',cleared:'#00e676'}[status]||'#448aff';
+  // AI Cognition Eye — cyan glowing dot for drivers being 'selected' by AI
+  if (cognition) {
+    return L.divIcon({ className:'', html:`<div class="drv-eye"></div>`, iconSize:[15,15], iconAnchor:[7,7] });
+  }
+  if (priority && (status==='alerting'||status==='alerted')) {
+    return L.divIcon({ className:'', html:`<div class="drv-pri" style="background:${c}"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
+  }
+  return L.divIcon({ className:'', html:`<div class="drv-dot" style="background:${c}"></div>`, iconSize:[13,13], iconAnchor:[6,6] });
+}
+
+function spawnDrivers() {
+  drivers.forEach(d => map.removeLayer(d.marker));
+  drivers = [];
+  for (let i=0; i<CFG.NUM_DRIVERS; i++) {
+    const si=Math.floor(Math.random()*(ROUTE.length-1)), t=Math.random();
+    const a=ROUTE[si], b=ROUTE[si+1];
+    const lat=a[0]+(b[0]-a[0])*t+(Math.random()-.5)*CFG.SPAWN_BAND;
+    const lng=a[1]+(b[1]-a[1])*t+(Math.random()-.5)*CFG.SPAWN_BAND;
+    const marker=L.marker([lat,lng],{icon:makeDriverIcon('normal',false),zIndexOffset:100,interactive:false}).addTo(map);
+    // ── FINE SYSTEM: auto-assign Dhaka-style plate on spawn ──
+    const plateNumber = 'DHK-' + String(Math.floor(1000 + Math.random() * 9000));
+    drivers.push({id:i,origLat:lat,origLng:lng,curLat:lat,curLng:lng,status:'normal',side:Math.random()<.5?1:-1,prog:0,progDir:0,wasAlerted:false,marker,plateNumber});
+  }
+}
+spawnDrivers();
+
+/* ══════════════════════════════════════════════════════════
+   CORRIDOR
+══════════════════════════════════════════════════════════ */
+function updateCorridor() {
+  if (corridorPoly) { map.removeLayer(corridorPoly); corridorPoly=null; }
+  if (clearedLine)  { map.removeLayer(clearedLine);  clearedLine=null;  }
+  if (!emergencyOn) return;
+
+  const ahead=[[vLat,vLng]];
+  for (let s=segIdx;s<ROUTE.length-1;s++) ahead.push(ROUTE[s+1]);
+
+  const buf=0.0055, L2=[], R2=[];
+  for (let i=0;i<ahead.length-1;i++) {
+    const brg=getBearing(ahead[i][0],ahead[i][1],ahead[i+1][0],ahead[i+1][1]);
+    const [dlL,dloL]=perpOff(brg,-1,buf), [dlR,dloR]=perpOff(brg,1,buf);
+    L2.push([ahead[i][0]+dlL,ahead[i][1]+dloL]);
+    R2.push([ahead[i][0]+dlR,ahead[i][1]+dloR]);
+  }
+  const lb=getBearing(ahead[ahead.length-2][0],ahead[ahead.length-2][1],ahead[ahead.length-1][0],ahead[ahead.length-1][1]);
+  const [a,b]=perpOff(lb,-1,buf),[c,d]=perpOff(lb,1,buf);
+  L2.push([ahead[ahead.length-1][0]+a,ahead[ahead.length-1][1]+b]);
+  R2.push([ahead[ahead.length-1][0]+c,ahead[ahead.length-1][1]+d]);
+
+  corridorPoly=L.polygon([...L2,...[...R2].reverse()],{color:'rgba(255,45,45,.7)',weight:1.2,dashArray:'5,5',fillColor:'#ff2d2d',fillOpacity:.07,interactive:false}).addTo(map);
+
+  const behind=[];
+  for (let s=0;s<=segIdx&&s<ROUTE.length;s++) behind.push(ROUTE[s]);
+  behind.push([vLat,vLng]);
+  if (behind.length>=2) clearedLine=L.polyline(behind,{color:'#00e676',weight:3.5,opacity:.45,interactive:false}).addTo(map);
+}
+
+/* ══════════════════════════════════════════════════════════
+   SPEECH
+══════════════════════════════════════════════════════════ */
+function speak(txt) {
+  if (!window.speechSynthesis) return;
+  speechQ.push(txt);
+  if (!isSpeaking) drain();
+}
+function drain() {
+  if (!speechQ.length) { isSpeaking=false; return; }
+  isSpeaking=true;
+  const u=new SpeechSynthesisUtterance(speechQ.shift());
+  u.rate=1.05; u.pitch=1.05; u.volume=1;
+  u.onend=()=>setTimeout(drain,180);
+  u.onerror=()=>{ isSpeaking=false; drain(); };
+  speechSynthesis.speak(u);
+}
+
+/* ══════════════════════════════════════════════════════════
+   CLAUDE API CALL
+══════════════════════════════════════════════════════════ */
+async function callClaude() {
+  aiLoading=true;
+  showLoading();
+
+  const dest=ROUTE[ROUTE.length-1];
+  const nearbyDrivers=drivers
+    .map(d=>({id:d.id, lat:+d.origLat.toFixed(5), lng:+d.origLng.toFixed(5), dist_m:Math.round(haversine(d.origLat,d.origLng,vLat,vLng))}))
+    .filter(d=>d.dist_m<CFG.CORRIDOR_M*1.5)
+    .sort((a,b)=>a.dist_m-b.dist_m)
+    .slice(0,30);
+
+  const payload={
+    vehicle:       { lat:+vLat.toFixed(5), lng:+vLng.toFixed(5) },
+    destination:   { lat:dest[0], lng:dest[1] },
+    nearby_drivers: nearbyDrivers,
+    corridor_radius_m: CFG.CORRIDOR_M,
+    route_km_remaining: +(haversine(vLat,vLng,dest[0],dest[1])/1000).toFixed(2),
+  };
+
+  const SYS=`You are an emergency corridor AI for Dhaka city. Given an emergency vehicle route and nearby driver positions, determine which drivers must pull aside and in what priority order to create the fastest corridor. Return JSON only with fields: priority_drivers (array of driver ids), alert_message (string in Bangla and English separated by /), estimated_time_saved (in minutes). No explanation, no markdown, just raw JSON.`;
+
+  try {
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model: CFG.CLAUDE_MODEL,
+        max_tokens: 1000,
+        system: SYS,
+        messages:[{role:'user',content:JSON.stringify(payload)}],
+      }),
+    });
+    const data=await res.json();
+    let raw='';
+    for (const blk of (data.content||[])) { if (blk.type==='text') raw+=blk.text; }
+    raw=raw.replace(/```json|```/g,'').trim();
+    const parsed=JSON.parse(raw);
+
+    aiResult=parsed;
+    aiPriorityIds=Array.isArray(parsed.priority_drivers)?parsed.priority_drivers:[];
+    aiPrioritySet=new Set(aiPriorityIds);
+    aiLoading=false;
+    showResult(parsed, nearbyDrivers.length);
+    schedulePriorityWave();
+
+  } catch(err) {
+    console.warn('Claude API fallback:',err);
+    // Fallback: distance order
+    aiPriorityIds=drivers
+      .filter(d=>haversine(d.origLat,d.origLng,vLat,vLng)<CFG.CORRIDOR_M)
+      .sort((a,b)=>haversine(a.origLat,a.origLng,vLat,vLng)-haversine(b.origLat,b.origLng,vLat,vLng))
+      .map(d=>d.id);
+    aiPrioritySet=new Set(aiPriorityIds);
+    aiLoading=false;
+    showFallback();
+    schedulePriorityWave();
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   PRIORITY WAVE — staggered alert dispatch
+══════════════════════════════════════════════════════════ */
+function schedulePriorityWave() {
+  priorityTimers.forEach(t=>clearTimeout(t)); priorityTimers=[]; aiAlerted=0;
+
+  aiPriorityIds.forEach((id, idx) => {
+    const t=setTimeout(()=>{
+      if (!emergencyOn) return;
+      const d=drivers.find(x=>x.id===id);
+      if (!d||d.wasAlerted) return;
+      if (haversine(d.origLat,d.origLng,vLat,vLng)<CFG.CORRIDOR_M*1.3) {
+        d.status='alerting'; d.progDir=+1; d.wasAlerted=true;
+        aiAlerted++;
+        const now=Date.now();
+        if (now-lastAlertAt>CFG.ALERT_COOLDOWN) {
+          const msg=aiResult?.alert_message||'Emergency! Pull to the side!';
+          const en=msg.includes('/')?msg.split('/').pop().trim():msg;
+          speak(en);
+          lastAlertAt=now;
+        }
+        refreshWaveBar();
+      }
+    }, idx*CFG.PRIORITY_GAP_MS);
+    priorityTimers.push(t);
+  });
+}
+
+function refreshWaveBar() {
+  const total=aiPriorityIds.length||1;
+  const pct=Math.round(aiAlerted/total*100);
+  const fill=document.getElementById('ai-wave-fill');
+  const lbl=document.getElementById('ai-wave-lbl');
+  if (fill) fill.style.width=pct+'%';
+  if (lbl)  lbl.textContent=`${aiAlerted} / ${total} priority drivers alerted`;
+}
+
+/* ══════════════════════════════════════════════════════════
+   AI PANEL STATES
+══════════════════════════════════════════════════════════ */
+function setAIBadge(cls,txt) {
+  document.getElementById('ai-badge').className='ai-badge '+cls;
+  document.getElementById('ai-badge-txt').textContent=txt;
+}
+
+function showLoading() {
+  document.getElementById('ai-panel').classList.add('visible');
+  setAIBadge('thinking','THINKING');
+  const n=drivers.filter(d=>haversine(d.origLat,d.origLng,vLat,vLng)<CFG.CORRIDOR_M*1.5).length;
+  document.getElementById('ai-body').innerHTML=`
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="skel t24 w80"></div>
+      <div class="skel w100"></div>
+      <div class="skel w60"></div>
+      <div style="margin:2px 0"></div>
+      <div class="skel t24 w100"></div>
+      <div class="skel w80"></div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);text-align:center;font-family:'Space Mono',monospace;letter-spacing:.5px">
+      Analysing ${n} drivers in corridor…
+    </div>`;
+}
+
+function showResult(data, nearbyCount) {
+  setAIBadge('ready','READY');
+  const ts=parseFloat(data.estimated_time_saved)||0;
+  const msg=data.alert_message||'';
+  const priCount=(data.priority_drivers||[]).length;
+  let bangla=msg, english='';
+  if (msg.includes('/')) { const p=msg.split('/'); bangla=p[0].trim(); english=p.slice(1).join('/').trim(); }
+  const now=new Date().toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+  document.getElementById('ai-body').innerHTML=`
+    <div class="ai-hero">
+      <div class="ai-hero-icon">⚡</div>
+      <div>
+        <div class="ai-hero-num">${ts.toFixed(1)}</div>
+        <div class="ai-hero-lbl">minutes saved</div>
+      </div>
+    </div>
+    <div class="ai-msg-box">
+      <div class="ai-msg-label">Alert Message</div>
+      <div class="ai-msg-bangla">${bangla||msg}</div>
+      ${english?`<div class="ai-msg-english">${english}</div>`:''}
+    </div>
+    <div class="ai-mini-row">
+      <div class="ai-mini"><div class="ai-mini-n" style="color:var(--purple)">${priCount}</div><div class="ai-mini-l">Priority</div></div>
+      <div class="ai-mini"><div class="ai-mini-n" style="color:var(--amber)">${nearbyCount}</div><div class="ai-mini-l">In Zone</div></div>
+      <div class="ai-mini"><div class="ai-mini-n" style="color:var(--blue)">${CFG.NUM_DRIVERS-priCount}</div><div class="ai-mini-l">Clear</div></div>
+    </div>
+    <div class="ai-wave">
+      <div class="ai-wave-bar"><div class="ai-wave-fill" id="ai-wave-fill"></div></div>
+      <div class="ai-wave-lbl" id="ai-wave-lbl">Dispatching in priority order…</div>
+    </div>
+    <div class="ai-footer">Updated ${now} · claude-sonnet-4</div>`;
+}
+
+function showFallback() {
+  setAIBadge('fallback','FALLBACK');
+  document.getElementById('ai-body').innerHTML=`
+    <div class="ai-warn-box">
+      <div class="ai-warn-title">⚠ API UNAVAILABLE</div>
+      <div class="ai-warn-body">Falling back to proximity-based priority ordering.</div>
+    </div>
+    <div class="ai-wave">
+      <div class="ai-wave-bar"><div class="ai-wave-fill" id="ai-wave-fill"></div></div>
+      <div class="ai-wave-lbl" id="ai-wave-lbl">Dispatching via distance order…</div>
+    </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════
+   DRIVER UPDATE
+══════════════════════════════════════════════════════════ */
+// Cognition flash: track which drivers are being 'seen' by AI this frame
+let lastCognitionSpeak = 0;
+
+function updateDrivers() {
+  let nA=0, nC=0, nN=0;
+  let inZone=0, cleared=0;
+  const fL=Math.cos(vBearing), fG=Math.sin(vBearing);
+
+  drivers.forEach(d=>{
+    const dist=haversine(d.origLat,d.origLng,vLat,vLng);
+    const dot=(d.origLat-vLat)*fL+(d.origLng-vLng)*fG;
+    const ahead=dot>-0.0003;
+    // Is this driver in the corridor zone?
+    const inCorridor = dist < CFG.CORRIDOR_M && ahead;
+
+    if (emergencyOn) {
+      if (inCorridor) inZone++;
+      if (inCorridor && d.prog > 0.5) cleared++;
+
+      // Non-priority drivers still get alerted by proximity
+      if (inCorridor&&!d.wasAlerted&&!aiPrioritySet.has(d.id)) {
+        const now=Date.now();
+        if (now-lastAlertAt>CFG.ALERT_COOLDOWN*.5) {
+          d.status='alerting'; d.progDir=+1; d.wasAlerted=true;
+          speak('Emergency! Pull to the side!'); lastAlertAt=now;
+        }
+      }
+      // All-clear behind vehicle
+      if (d.wasAlerted&&!ahead&&d.status!=='cleared') {
+        d.status='clearing'; d.progDir=-1;
+        const now=Date.now();
+        if (now-lastClearAt>CFG.CLEAR_COOLDOWN) { speak('All clear, you may drive now.'); lastClearAt=now; }
+      }
+      if (d.status==='alerting'||d.status==='alerted') nA++;
+      else if (d.status==='clearing'||d.status==='cleared') nC++;
+      else nN++;
+    } else {
+      if (d.status!=='normal') d.progDir=-1;
+      nN++;
+    }
+
+    // Animate
+    const S=0.055;
+    if (d.progDir===+1) { d.prog=Math.min(1,d.prog+S); if(d.prog>=1)d.status='alerted'; }
+    else if(d.progDir===-1) {
+      d.prog=Math.max(0,d.prog-S*.7);
+      if(d.prog<=0){d.status='normal';d.progDir=0;if(!emergencyOn)d.wasAlerted=false;}
+      else if(d.wasAlerted)d.status='cleared';
+    }
+
+    const [ol,og]=perpOff(vBearing,d.side,CFG.PULLOUT_DEG);
+    const p=ease(d.prog);
+    d.curLat=d.origLat+ol*p; d.curLng=d.origLng+og*p;
+    d.marker.setLatLng([d.curLat,d.curLng]);
+
+    const isPri=aiPrioritySet.has(d.id);
+    // AI Cognition: show cyan eye for drivers in corridor that haven't moved yet
+    const isCognition = emergencyOn && inCorridor && !d.wasAlerted && d.prog < 0.05;
+
+    let ic;
+    if(d.prog>.85)ic=(d.status==='cleared'||d.status==='clearing')?'cleared':'alerted';
+    else if(d.prog>.05)ic=(d.status==='cleared'||d.status==='clearing')?'clearing':'alerting';
+    else ic='normal';
+    d.marker.setIcon(makeDriverIcon(ic, isPri, isCognition));
+  });
+
+  document.getElementById('s-alerted').textContent=nA;
+  document.getElementById('s-cleared').textContent=nC;
+  document.getElementById('s-normal').textContent=nN;
+
+  // Update Impact Dashboard
+  updateImpactDash(inZone, cleared);
+}
+
+/* ══════════════════════════════════════════════════════════
+   ANIMATION LOOP
+══════════════════════════════════════════════════════════ */
+function tick() {
+  if (!isMoving) return;
+  let rem=CFG.SPEED_BASE_MS*speedMult*(CFG.TICK_MS/1000);
+  while (rem>0&&segIdx<ROUTE.length-1) {
+    const a=ROUTE[segIdx],b=ROUTE[segIdx+1];
+    const sl=haversine(a[0],a[1],b[0],b[1]);
+    const dl=sl*(1-segT);
+    if(rem>=dl){rem-=dl;segIdx++;segT=0;}
+    else{segT+=rem/sl;rem=0;}
+  }
+  if (segIdx>=ROUTE.length-1) {
+    vLat=ROUTE[ROUTE.length-1][0]; vLng=ROUTE[ROUTE.length-1][1];
+    vehicleMark.setLatLng([vLat,vLng]);
+    stopMove(true); setStatus('done','✓ DESTINATION REACHED'); return;
+  }
+  const a=ROUTE[segIdx],b=ROUTE[segIdx+1];
+  vLat=a[0]+(b[0]-a[0])*segT; vLng=a[1]+(b[1]-a[1])*segT;
+  vBearing=getBearing(a[0],a[1],b[0],b[1]);
+  vehicleMark.setLatLng([vLat,vLng]);
+  updateDrivers(); updateCorridor(); assessFines();
+}
+
+/* ══════════════════════════════════════════════════════════
+   STATUS & CONTROLS
+══════════════════════════════════════════════════════════ */
+function setStatus(cls,txt) {
+  document.getElementById('status-pill').className=cls;
+  document.getElementById('status-text').textContent=txt;
+  document.getElementById('pill-dot').className='pill-dot'+(cls==='emergency'?' blink':'');
+}
+
+/* ══════════════════════════════════════════════════════════
+   EMERGENCY SIREN — beep·beep·whip + speech
+══════════════════════════════════════════════════════════ */
+function playEmergencySiren() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // ── helper: play a tone burst ──────────────────────────
+  function tone(freq, startHz, endHz, startT, dur, type='sine', vol=0.45) {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(startHz ?? freq, ctx.currentTime + startT);
+    if (endHz != null) osc.frequency.exponentialRampToValueAtTime(endHz, ctx.currentTime + startT + dur);
+    gain.gain.setValueAtTime(0, ctx.currentTime + startT);
+    gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + startT + 0.01);
+    gain.gain.setValueAtTime(vol, ctx.currentTime + startT + dur - 0.04);
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + startT + dur);
+    osc.start(ctx.currentTime + startT);
+    osc.stop(ctx.currentTime + startT + dur + 0.05);
+  }
+
+  // ── BEEP  BEEP  (two sharp horn blasts) ───────────────
+  tone(null, 880, 880,  0.00, 0.18, 'square', 0.5);   // beep 1
+  tone(null, 880, 880,  0.28, 0.18, 'square', 0.5);   // beep 2
+
+  // ── WHIP  (rising sweep 400 → 1800 Hz) ────────────────
+  tone(null, 400, 1800, 0.58, 0.38, 'sawtooth', 0.4);
+
+  // ── second WHIP (slightly higher) ─────────────────────
+  tone(null, 500, 2200, 1.05, 0.38, 'sawtooth', 0.35);
+
+  // ── short pause then speech ────────────────────────────
+  const speechDelay = 1600;
+  setTimeout(() => {
+    speak('Emergency!');
+    setTimeout(() => speak('Emergency!'),   520);
+    setTimeout(() => speak('Emergency!'),  1040);
+    setTimeout(() => speak('Pull to the side! Pull to the side!'), 1700);
+  }, speechDelay);
+
+  // close AudioContext after all sounds finish
+  setTimeout(() => ctx.close(), 5000);
+}
+
+function toggleEmergency() {
+  emergencyOn=!emergencyOn;
+  const btn=document.getElementById('btn-emerg');
+  if (emergencyOn) {
+    btn.classList.add('on');
+    document.getElementById('emerg-label').textContent='Emergency ON';
+    vehicleMark.setIcon(makeVehicleIcon(true));
+    setStatus('emergency','🚨 EMERGENCY — CLEAR THE WAY');
+    updateCorridor();
+    playEmergencySiren();
+    if (isMoving) startImpactTimer();
+    callClaude(); // 🤖 AI prioritisation // 🤖 AI prioritisation
+  } else {
+    btn.classList.remove('on');
+    document.getElementById('emerg-label').textContent='Activate Emergency';
+    vehicleMark.setIcon(makeVehicleIcon(false));
+    isMoving?setStatus('moving','🚑 MOVING THROUGH DHAKA'):setStatus('idle','SIMULATION READY');
+    updateCorridor();
+    document.getElementById('ai-panel').classList.remove('visible');
+    priorityTimers.forEach(t=>clearTimeout(t)); priorityTimers=[];
+    aiPriorityIds=[]; aiPrioritySet=new Set(); aiResult=null; aiAlerted=0;
+    if(window.speechSynthesis){speechSynthesis.cancel();speechQ=[];isSpeaking=false;}
+    drivers.forEach(d=>{d.progDir=-1;d.wasAlerted=false;});
+  }
+}
+
+function toggleMove() { isMoving?pauseMove():startMove(); }
+
+function startMove() {
+  if (segIdx>=ROUTE.length-1) return;
+  isMoving=true;
+  document.getElementById('move-icon').textContent='⏸';
+  document.getElementById('move-label').textContent='Pause';
+  document.getElementById('btn-move').classList.add('moving');
+  emergencyOn?setStatus('emergency','🚨 EMERGENCY — CLEAR THE WAY'):setStatus('moving','🚑 MOVING THROUGH DHAKA');
+  mainInterval=setInterval(tick,CFG.TICK_MS);
+  if (emergencyOn) startImpactTimer();
+}
+
+function pauseMove() {
+  isMoving=false; clearInterval(mainInterval); stopImpactTimer();
+  document.getElementById('move-icon').textContent='▶';
+  document.getElementById('move-label').textContent='Resume';
+  document.getElementById('btn-move').classList.remove('moving');
+  if(!emergencyOn) setStatus('idle','PAUSED');
+}
+
+function stopMove(done) {
+  isMoving=false; clearInterval(mainInterval); stopImpactTimer();
+  document.getElementById('move-icon').textContent='▶';
+  document.getElementById('move-label').textContent='Start';
+  document.getElementById('btn-move').classList.remove('moving');
+  if(done) document.getElementById('btn-move').disabled=true;
+}
+
+function resetSim() {
+  isMoving=false; emergencyOn=false;
+  clearInterval(mainInterval);
+  priorityTimers.forEach(t=>clearTimeout(t)); priorityTimers=[];
+  segIdx=0;segT=0;vLat=ROUTE[0][0];vLng=ROUTE[0][1];vBearing=0;
+  lastAlertAt=0;lastClearAt=0;
+  aiPriorityIds=[];aiPrioritySet=new Set();aiResult=null;aiAlerted=0;
+
+  vehicleMark.setLatLng([vLat,vLng]);vehicleMark.setIcon(makeVehicleIcon(false));
+  if(corridorPoly){map.removeLayer(corridorPoly);corridorPoly=null;}
+  if(clearedLine){map.removeLayer(clearedLine);clearedLine=null;}
+  if(window.speechSynthesis){speechSynthesis.cancel();speechQ=[];isSpeaking=false;}
+
+  document.getElementById('btn-emerg').classList.remove('on');
+  document.getElementById('emerg-label').textContent='Activate Emergency';
+  document.getElementById('btn-move').disabled=false;
+  document.getElementById('move-icon').textContent='▶';
+  document.getElementById('move-label').textContent='Start';
+  document.getElementById('btn-move').classList.remove('moving');
+  document.getElementById('ai-panel').classList.remove('visible');
+  setStatus('idle','SIMULATION READY');
+  spawnDrivers();
+  resetFines(); // ── FINE SYSTEM reset ──
+  resetImpactDash(); // ── IMPACT DASHBOARD reset ──
+  document.getElementById('s-alerted').textContent='0';
+  document.getElementById('s-cleared').textContent='0';
+  document.getElementById('s-normal').textContent=CFG.NUM_DRIVERS;
+}
+
+function setSpeed(v) {
+  speedMult=parseInt(v);
+  document.getElementById('speed-val').textContent='×'+v;
+}
+
+document.getElementById('s-normal').textContent=CFG.NUM_DRIVERS;
+
+// ── TRAFFIC DENSITY ──
+function setTraffic(v) {
+  CFG.NUM_DRIVERS = parseInt(v);
+  document.getElementById('traffic-val').textContent = v;
+  // Respawn drivers at new density
+  if (emergencyOn) toggleEmergency(); // turn off emergency first
+  spawnDrivers();
+  document.getElementById('s-normal').textContent = CFG.NUM_DRIVERS;
+  resetFines && resetFines();
+}
+
+// ── IMPACT DASHBOARD STATE ──
+let impactTimeSaved = 0;
+let impactInterval  = null;
+let lastLivesFlip   = 0;
+let livesVal        = 1;
+
+function startImpactTimer() {
+  if (impactInterval) return;
+  impactInterval = setInterval(() => {
+    if (!isMoving || !emergencyOn) return;
+    // Time saved grows faster with more cleared drivers
+    const cleared = parseInt(document.getElementById('s-cleared').textContent)||0;
+    const rate = 0.5 + (cleared / Math.max(CFG.NUM_DRIVERS, 1)) * 3.5;
+    impactTimeSaved = Math.min(impactTimeSaved + rate, 9999);
+    document.getElementById('d-time-saved').textContent = Math.round(impactTimeSaved);
+
+    // Lives at risk: flicker between 1 and 2 based on ambulance delay (no movement = risk rises)
+    const now = Date.now();
+    if (now - lastLivesFlip > 1800 + Math.random() * 1200) {
+      livesVal = isMoving ? (Math.random() < 0.3 ? 2 : 1) : 2;
+      const el = document.getElementById('d-lives');
+      el.textContent = livesVal;
+      el.classList.toggle('dash-lives-blink', livesVal > 1);
+      lastLivesFlip = now;
+    }
+  }, 200);
+}
+
+function stopImpactTimer() {
+  clearInterval(impactInterval);
+  impactInterval = null;
+}
+
+function resetImpactDash() {
+  impactTimeSaved = 0;
+  livesVal = 1;
+  lastLivesFlip = 0;
+  stopImpactTimer();
+  document.getElementById('d-time-saved').textContent = '0';
+  document.getElementById('d-clearance').textContent  = '0%';
+  document.getElementById('d-lives').textContent      = '1';
+  document.getElementById('d-lives').classList.remove('dash-lives-blink');
+}
+
+function updateImpactDash(inZone, clearedInZone) {
+  if (!emergencyOn) return;
+  const pct = inZone > 0 ? Math.round((clearedInZone / inZone) * 100) : 0;
+  document.getElementById('d-clearance').textContent = pct + '%';
+}
+
+// ── FINE SYSTEM ──
+// State: map of driverId → { plate, amount, ticksInViolation }
+const fineRegistry  = new Map();   // id → { plate, amount }
+const fineTracking  = new Map();   // id → ticksWhileBlocking (for grace period)
+const FINE_PER_VIO  = 500;
+const FINE_TICKS_GRACE = 20;       // must block for ~1s (20 × 50ms) before fined
+
+function assessFines() {
+  if (!emergencyOn) return;
+  drivers.forEach(d => {
+    const dist   = haversine(d.curLat, d.curLng, vLat, vLng);
+    const dLat   = d.origLat - vLat, dLng = d.origLng - vLng;
+    const fwdLat = Math.cos(vBearing), fwdLng = Math.sin(vBearing);
+    const ahead  = (dLat * fwdLat + dLng * fwdLng) > 0;
+
+    const isBlocking = dist < CFG.CORRIDOR_M && ahead && d.prog < 0.3;
+
+    if (isBlocking) {
+      fineTracking.set(d.id, (fineTracking.get(d.id) || 0) + 1);
+      if (fineTracking.get(d.id) === FINE_TICKS_GRACE) {
+        // Issue first fine
+        const entry = fineRegistry.get(d.id) || { plate: d.plateNumber, amount: 0 };
+        entry.amount += FINE_PER_VIO;
+        fineRegistry.set(d.id, entry);
+        renderFinePanel();
+      } else if (fineTracking.get(d.id) > FINE_TICKS_GRACE &&
+                 fineTracking.get(d.id) % 60 === 0) {
+        // Repeat fine every ~3s of continued blocking
+        const entry = fineRegistry.get(d.id);
+        entry.amount += FINE_PER_VIO;
+        renderFinePanel();
+      }
+    } else {
+      fineTracking.set(d.id, 0);
+    }
+  });
+}
+
+function renderFinePanel() {
+  const list  = document.getElementById('fp-list');
+  const total = document.getElementById('fp-total');
+  const empty = document.getElementById('fp-empty');
+
+  if (fineRegistry.size === 0) {
+    list.innerHTML = '<div class="fp-empty" id="fp-empty">No violations yet</div>';
+    total.textContent = '৳0';
+    return;
+  }
+
+  let grand = 0;
+  const rows = [];
+  fineRegistry.forEach(({ plate, amount }) => {
+    grand += amount;
+    rows.push({ plate, amount });
+  });
+  rows.sort((a, b) => b.amount - a.amount);
+
+  list.innerHTML = rows.map(r =>
+    `<div class="fp-row">
+      <span class="fp-plate">${r.plate}</span>
+      <span class="fp-amt">৳${r.amount.toLocaleString()}</span>
+    </div>`
+  ).join('');
+
+  total.textContent = '৳' + grand.toLocaleString();
+}
+
+function resetFines() {
+  fineRegistry.clear();
+  fineTracking.clear();
+  renderFinePanel();
+}
+// ── END FINE SYSTEM ──
+
+// ── ROUTE PLANNER ──
+// New variables — separate from all existing state
+let rpPolyline    = null;
+let rpStartMarker = null;
+let rpEndMarker   = null;
+
+// Swap To to a different hospital if From and To match
+function rpSwapIfSame() {
+  const fromSel = document.getElementById('rp-from');
+  const toSel   = document.getElementById('rp-to');
+  if (fromSel.value === toSel.value) {
+    const opts  = Array.from(toSel.options);
+    const other = opts.find(o => o.value !== fromSel.value);
+    if (other) toSel.value = other.value;
+  }
+}
+
+function calculateRoute() {
+  const fromSel = document.getElementById('rp-from');
+  const toSel   = document.getElementById('rp-to');
+  const calcBtn = document.getElementById('rp-calc-btn');
+  const status  = document.getElementById('rp-status');
+
+  const [fromLat, fromLng] = fromSel.value.split(',').map(Number);
+  const [toLat,   toLng  ] = toSel.value.split(',').map(Number);
+  const fromName = fromSel.options[fromSel.selectedIndex].text;
+  const toName   = toSel.options[toSel.selectedIndex].text;
+
+  // UI — loading state
+  calcBtn.textContent  = 'Calculating…';
+  calcBtn.disabled     = true;
+  status.style.display = 'none';
+  status.className     = '';
+
+  const osrmUrl =
+    `https://router.project-osrm.org/route/v1/driving/` +
+    `${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
+
+  fetch(osrmUrl)
+    .then(r => {
+      if (!r.ok) throw new Error(`OSRM ${r.status}`);
+      return r.json();
+    })
+    .then(data => {
+      if (!data.routes || !data.routes.length) throw new Error('No route found');
+
+      const route    = data.routes[0];
+      const coords   = route.geometry.coordinates; // [[lng,lat], …]
+      const distKm   = (route.distance / 1000).toFixed(1);
+      const timeMins = Math.round(route.duration / 60);
+
+      // Convert GeoJSON [lng,lat] → [lat,lng] and replace global ROUTE in-place
+      ROUTE.length = 0;
+      coords.forEach(([lng, lat]) => ROUTE.push([lat, lng]));
+
+      // Remove old route polyline, replace with new dashed blue line (same style)
+      if (rpPolyline) { map.removeLayer(rpPolyline); rpPolyline = null; }
+      rpPolyline = L.polyline(ROUTE, {
+        color: '#448aff', weight: 3, opacity: .35, dashArray: '6,5'
+      }).addTo(map);
+
+      // Remove old RP start/end markers, place new ones
+      if (rpStartMarker) { map.removeLayer(rpStartMarker); rpStartMarker = null; }
+      if (rpEndMarker)   { map.removeLayer(rpEndMarker);   rpEndMarker   = null; }
+
+      rpStartMarker = L.circleMarker(ROUTE[0], {
+        radius: 7, fillColor: '#00e676', fillOpacity: 1,
+        color: '#fff', weight: 2, interactive: false
+      }).addTo(map).bindTooltip(fromName);
+
+      rpEndMarker = L.circleMarker(ROUTE[ROUTE.length - 1], {
+        radius: 7, fillColor: '#ff2d2d', fillOpacity: 1,
+        color: '#fff', weight: 2, interactive: false
+      }).addTo(map).bindTooltip(toName);
+
+      // Fit map to new route
+      map.fitBounds(L.latLngBounds(ROUTE), { padding: [50, 50] });
+
+      // Reset simulation cleanly to the new route
+      resetSim();
+
+      // Show distance + time
+      status.textContent   = `${distKm} km · ~${timeMins} min`;
+      status.className     = '';
+      status.style.display = 'block';
+
+      calcBtn.textContent = 'Calculate Route';
+      calcBtn.disabled    = false;
+    })
+    .catch(err => {
+      status.textContent   = `Error: ${err.message}`;
+      status.className     = 'error';
+      status.style.display = 'block';
+      calcBtn.textContent  = 'Calculate Route';
+      calcBtn.disabled     = false;
+    });
+}
+// ── END ROUTE PLANNER ──
+</script>
+</body>
+</html>
